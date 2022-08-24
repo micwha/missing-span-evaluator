@@ -61,13 +61,16 @@ def process_exemplars(stream_id, exemplars, project):
     for exemplar in exemplars:
         trace_guid = exemplar['trace_guid']
         if trace_guid not in processed_traces:
-            trace_data = process_trace(trace_guid, exemplar['span_guid'], project)            
+            trace_data = process_trace(trace_guid, exemplar['span_guid'], project)
             processed_traces.append(trace_guid)
             if trace_data:
+                trace_data['trace-url'] = f'https://app.lightstep.com/{project}/trace?trace_handle={exemplar["trace_handle"]}'
+                trace_data['oldest-micros'] = exemplar['oldest_micros']
+                trace_data['youngest-micros'] = exemplar['youngest_micros']
                 stream_data['traces'].append(trace_data)
 
-    write_trace_to_file(stream_data)
-    analyze_traces(stream_data)
+    final_data = analyze_traces(stream_data)
+    write_trace_to_file(final_data)
     return len(processed_traces)
 
 def process_trace(trace_id, span_id, project):
@@ -122,11 +125,15 @@ def analyze_traces(stream_data):
 
     for trace in sorted_traces:
         if trace['span-count'] < baseline['span-count']:
-            msg = f'Trace {trace["trace-id"]} is missing the following spans: \n'
+            msg = f'Trace {trace["trace-id"]} ({trace["trace-url"]}) is missing the following spans: \n-->'
             s = set(trace['span-names'])
             missing_spans = [x for x in baseline['span-names'] if x not in s]
             msg += '\n--> '.join(missing_spans)
+            trace['missing-spans'] = missing_spans
             LOG.warn(msg)
+
+    stream_data['traces'] = sorted_traces
+    return stream_data
 
 
 
