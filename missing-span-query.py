@@ -1,14 +1,17 @@
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import sys
 import time
 import requests
 import urllib
 import logging
+from dotenv import load_dotenv
 
-LS_ORGANIZATION = 'LightStep'
-LS_API_KEY = 'ADD YOUR KEY HERE'
+load_dotenv()
+LS_ORGANIZATION = os.getenv('LS_ORGANIZATION')
+LS_API_KEY = os.getenv('LS_API_KEY')
 
 LS_API_HEADERS = {"Authorization": LS_API_KEY}
 
