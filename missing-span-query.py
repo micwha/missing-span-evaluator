@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -8,12 +8,17 @@ import requests
 import urllib
 import logging
 from dotenv import load_dotenv
+import pytz
 
 load_dotenv()
 LS_ORGANIZATION = os.getenv('LS_ORGANIZATION')
 LS_API_KEY = os.getenv('LS_API_KEY')
-
 LS_API_HEADERS = {"Authorization": LS_API_KEY}
+
+TIMEZONE = pytz.timezone('US/Central')
+OLDEST_TIME = datetime(2022, 8, 23, 1, 5, 0, 0)
+OLDEST_TIME_LOCAL = TIMEZONE.localize(OLDEST_TIME)
+YOUNGEST_TIME_LOCAL = OLDEST_TIME_LOCAL + timedelta(minutes=5)
 
 LOG = logging.getLogger()
 LOG.setLevel(logging.INFO)
@@ -30,7 +35,7 @@ def main():
 
     try:
         start = time.time()
-        exemplars = get_stream_exemplars(project, stream_id, '2022-08-23T01:05:00-05:00', '2022-08-23T01:10:00-05:00')
+        exemplars = get_stream_exemplars(project, stream_id, OLDEST_TIME_LOCAL, YOUNGEST_TIME_LOCAL)
         trace_count = process_exemplars(stream_id, exemplars, project)
         end = time.time()
         exec_time = round(end - start, 3)
@@ -41,10 +46,12 @@ def main():
 
 def get_stream_exemplars(project, stream_id, start_time, end_time, resolution_ms = 60000, include_ops_counts = 0, include_error_counts = 0):
     url = f'https://api.lightstep.com/public/v0.2/{LS_ORGANIZATION}/projects/{project}/streams/{stream_id}' \
-          f'/timeseries?oldest-time={urllib.parse.quote(start_time)}&youngest-time={urllib.parse.quote(end_time)}&resolution-ms={resolution_ms}&include-exemplars=1' \
+          f'/timeseries?oldest-time={urllib.parse.quote(start_time.isoformat())}' \
+          f'&youngest-time={urllib.parse.quote(end_time.isoformat())}' \
+          f'&resolution-ms={resolution_ms}&include-exemplars=1' \
           f'&include-ops-counts={include_ops_counts}&include-error-counts={include_error_counts}'
 
-    LOG.info(f'Getting exemplars for stream {stream_id}...')
+    LOG.info(f'Getting exemplars for stream {stream_id}...\n{url}')
     response =  requests.get(url, headers=LS_API_HEADERS).json()
     LOG.info(f'Exemplars retrieved successfully')
     return response['data']['attributes']['exemplars']
@@ -53,7 +60,10 @@ def get_stream_exemplars(project, stream_id, start_time, end_time, resolution_ms
 def process_exemplars(stream_id, exemplars, project):
     LOG.info(f'Processing exemplars for stream {stream_id}...')
     stream_data = {
-            'stream-id': stream_id,
+            'stream-id': stream_id,            
+            'oldest-time': OLDEST_TIME_LOCAL.isoformat(),
+            'youngest-time': YOUNGEST_TIME_LOCAL.isoformat(),
+            'created-at': datetime.now(TIMEZONE).isoformat(), 
             'traces': []
     }
 
@@ -65,8 +75,6 @@ def process_exemplars(stream_id, exemplars, project):
             processed_traces.append(trace_guid)
             if trace_data:
                 trace_data['trace-url'] = f'https://app.lightstep.com/{project}/trace?trace_handle={exemplar["trace_handle"]}'
-                trace_data['oldest-micros'] = exemplar['oldest_micros']
-                trace_data['youngest-micros'] = exemplar['youngest_micros']
                 stream_data['traces'].append(trace_data)
 
     final_data = analyze_traces(stream_data)
@@ -109,9 +117,10 @@ def get_trace_for_span(span_id, project):
 
 def write_trace_to_file(stream_data):
     date = datetime.now()
-    file_date = f'{date.strftime("%Y")}_{date.strftime("%m")}_{date.strftime("%d")}'
+    start_time = str(OLDEST_TIME_LOCAL.replace(tzinfo=timezone.utc).timestamp()).replace('.', '-')
+    end_time = str(YOUNGEST_TIME_LOCAL.replace(tzinfo=timezone.utc).timestamp()).replace('.', '-')
     stream_id = stream_data['stream-id']
-    stream_file = Path(f'traceanalysis_{stream_id}_{file_date}.json')
+    stream_file = Path(f'traceanalysis_{stream_id}_{start_time}_{end_time}.json')
 
     LOG.info('Writing data to file...')
     with open(stream_file, "w") as outfile:
